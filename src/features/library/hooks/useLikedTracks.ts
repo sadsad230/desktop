@@ -1,6 +1,15 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { api, getAuthSession, toClientTrack } from "@/shared/api";
 import type { Track } from "@/shared/types";
+import {
+  clearOverrides,
+  currentSettleSeq,
+  getOverrideLiked,
+  hasOverrides,
+  onOverridesChange,
+  overrideEntries,
+  reconcileOverrides,
+} from "./likes/optimisticLikes";
 
 type LikedData = { tracks: Track[]; total: number };
 const EMPTY: LikedData = { tracks: [], total: 0 };
@@ -10,18 +19,14 @@ let request: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 let view = { data: cache, isLoading: true };
 
-const optimisticOverrides = new Map<string, boolean>();
-
 function buildView(isLoading: boolean): {
   data: LikedData;
   isLoading: boolean;
 } {
-  if (optimisticOverrides.size === 0) return { data: cache, isLoading };
+  if (!hasOverrides()) return { data: cache, isLoading };
 
-  let tracks = cache.tracks.filter(
-    (t) => optimisticOverrides.get(t.id) !== false,
-  );
-  for (const [id, liked] of optimisticOverrides) {
+  let tracks = cache.tracks.filter((t) => getOverrideLiked(t.id) !== false);
+  for (const [id, liked] of overrideEntries()) {
     if (liked && !tracks.some((t) => t.id === id)) {
       tracks = [
         {
@@ -54,10 +59,17 @@ function snapshot() {
   return view;
 }
 
+onOverridesChange(() => emit(false));
+
 const SERVER_SNAPSHOT = { data: EMPTY, isLoading: true };
 
+let refetchQueued = false;
+
 function load(force = false): Promise<void> {
-  if (request) return request;
+  if (request) {
+    if (force) refetchQueued = true;
+    return request;
+  }
   const session = getAuthSession();
   if (!session?.accessToken) {
     cache = EMPTY;
@@ -68,6 +80,8 @@ function load(force = false): Promise<void> {
   if (loaded && !force) return Promise.resolve();
 
   if (!loaded) emit(true);
+
+  const startSeq = currentSettleSeq();
 
   request = (async () => {
     const tracks: Track[] = [];
@@ -84,7 +98,7 @@ function load(force = false): Promise<void> {
     } while (cursor);
     cache = { tracks, total: tracks.length };
     loaded = true;
-    optimisticOverrides.clear();
+    reconcileOverrides(startSeq);
   })()
     .catch(() => {
       if (!loaded) cache = EMPTY;
@@ -93,30 +107,12 @@ function load(force = false): Promise<void> {
     .finally(() => {
       request = null;
       emit(false);
+      if (refetchQueued) {
+        refetchQueued = false;
+        void load(true);
+      }
     });
   return request;
-}
-
-export function applyOptimisticLike(trackId: string): () => void {
-  const prev = optimisticOverrides.get(trackId);
-  optimisticOverrides.set(trackId, true);
-  emit(false);
-  return () => {
-    if (prev === undefined) optimisticOverrides.delete(trackId);
-    else optimisticOverrides.set(trackId, prev);
-    emit(false);
-  };
-}
-
-export function applyOptimisticUnlike(trackId: string): () => void {
-  const prev = optimisticOverrides.get(trackId);
-  optimisticOverrides.set(trackId, false);
-  emit(false);
-  return () => {
-    if (prev === undefined) optimisticOverrides.delete(trackId);
-    else optimisticOverrides.set(trackId, prev);
-    emit(false);
-  };
 }
 
 if (typeof window !== "undefined") {
@@ -125,7 +121,7 @@ if (typeof window !== "undefined") {
     if (!session?.accessToken) {
       cache = EMPTY;
       loaded = false;
-      optimisticOverrides.clear();
+      clearOverrides();
       emit(false);
     } else {
       void load(true);
