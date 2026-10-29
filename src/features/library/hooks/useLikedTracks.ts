@@ -1,52 +1,29 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { api, getAuthSession, toClientTrack } from "@/shared/api";
-import type { Track } from "@/shared/types";
+import { getAuthSession } from "@/shared/api";
 import {
-  clearOverrides,
+  captureScope,
+  isScopeActive,
+  onAccountChange,
+  syncAccountScope,
+} from "./likes/accountScope";
+import { buildLikedView, type LikedData } from "./likes/buildLikedView";
+import { fetchLikedTracks } from "./likes/fetchLikedTracks";
+import {
   currentSettleSeq,
-  getOverrideLiked,
-  hasOverrides,
   onOverridesChange,
-  overrideEntries,
   reconcileOverrides,
 } from "./likes/optimisticLikes";
 
-type LikedData = { tracks: Track[]; total: number };
 const EMPTY: LikedData = { tracks: [], total: 0 };
 let cache: LikedData = EMPTY;
 let loaded = false;
 let request: Promise<void> | null = null;
+let refetchQueued = false;
 const listeners = new Set<() => void>();
 let view = { data: cache, isLoading: true };
 
-function buildView(isLoading: boolean): {
-  data: LikedData;
-  isLoading: boolean;
-} {
-  if (!hasOverrides()) return { data: cache, isLoading };
-
-  let tracks = cache.tracks.filter((t) => getOverrideLiked(t.id) !== false);
-  for (const [id, liked] of overrideEntries()) {
-    if (liked && !tracks.some((t) => t.id === id)) {
-      tracks = [
-        {
-          id,
-          title: "",
-          artists: "",
-          artistId: undefined,
-          coverUrl: "",
-          durationMs: 0,
-          playCount: 0,
-        } as Track,
-        ...tracks,
-      ];
-    }
-  }
-  return { data: { tracks, total: tracks.length }, isLoading };
-}
-
 function emit(isLoading = false) {
-  view = buildView(isLoading);
+  view = buildLikedView(cache, isLoading);
   listeners.forEach((l) => l());
 }
 
@@ -61,17 +38,21 @@ function snapshot() {
 
 onOverridesChange(() => emit(false));
 
-const SERVER_SNAPSHOT = { data: EMPTY, isLoading: true };
+onAccountChange(() => {
+  cache = EMPTY;
+  loaded = false;
+  emit(false);
+});
 
-let refetchQueued = false;
+const SERVER_SNAPSHOT = { data: EMPTY, isLoading: true };
 
 function load(force = false): Promise<void> {
   if (request) {
     if (force) refetchQueued = true;
     return request;
   }
-  const session = getAuthSession();
-  if (!session?.accessToken) {
+  const scope = captureScope();
+  if (!getAuthSession()?.accessToken || !scope) {
     cache = EMPTY;
     loaded = false;
     emit(false);
@@ -84,23 +65,20 @@ function load(force = false): Promise<void> {
   const startSeq = currentSettleSeq();
 
   request = (async () => {
-    const tracks: Track[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await api.listLikedTracks(100, cursor);
-      tracks.push(
-        ...page.items.map(({ track, likedAt }) => ({
-          ...toClientTrack(track),
-          addedAt: likedAt,
-        })),
-      );
-      cursor = page.nextCursor ?? undefined;
-    } while (cursor);
+    const tracks = await fetchLikedTracks(scope);
+    if (!tracks) {
+      refetchQueued = true;
+      return;
+    }
     cache = { tracks, total: tracks.length };
     loaded = true;
     reconcileOverrides(startSeq);
   })()
     .catch(() => {
+      if (!isScopeActive(scope)) {
+        refetchQueued = true;
+        return;
+      }
       if (!loaded) cache = EMPTY;
       loaded = true;
     })
@@ -117,11 +95,11 @@ function load(force = false): Promise<void> {
 
 if (typeof window !== "undefined") {
   const handleRefresh = () => {
+    syncAccountScope();
     const session = getAuthSession();
     if (!session?.accessToken) {
       cache = EMPTY;
       loaded = false;
-      clearOverrides();
       emit(false);
     } else {
       void load(true);

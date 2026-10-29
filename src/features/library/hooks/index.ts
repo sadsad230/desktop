@@ -24,5 +24,5 @@ export {
   useSaveExternalItem,
   useRemoveExternalItem,
 } from "./useLibraryMutations";
-export { useLikeTrack } from "@/features/library/hooks/likes/useLikeTrack";
-export { useUnlikeTrack } from "@/features/library/hooks/likes/useUnlikeTrack";
+export { useLikeTrack } from "./likes/useLikeTrack";
+export { useUnlikeTrack } from "./likes/useUnlikeTrack";

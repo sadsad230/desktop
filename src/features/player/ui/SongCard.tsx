@@ -317,7 +317,11 @@ function SongCard({
         {!isArtist && (
           <Button
             type="button"
+            aria-label={liked ? t("common.unlike") : t("common.like")}
+            aria-pressed={liked}
+            title={liked ? t("common.unlike") : t("common.like")}
             className="rounded-md bg-transparent border-0 p-0 text-text-primary transition-all duration-200 active:scale-[0.96] flex items-center justify-center cursor-pointer"
+            onKeyDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               handleLike();

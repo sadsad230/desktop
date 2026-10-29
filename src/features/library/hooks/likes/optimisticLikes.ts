@@ -1,7 +1,10 @@
+import { onAccountChange, type AccountScope } from "./accountScope";
+
 type Override = {
   liked: boolean;
   pending: number;
   settledSeq: number;
+  signal: AbortSignal;
 };
 
 const overrides = new Map<string, Override>();
@@ -30,27 +33,34 @@ export function* overrideEntries(): Generator<[string, boolean]> {
 
 export const currentSettleSeq = () => settleSeq;
 
-function apply(trackId: string, liked: boolean) {
+function apply(trackId: string, liked: boolean, scope: AccountScope) {
+  if (scope.signal.aborted) return;
   const cur = overrides.get(trackId);
+  const own = cur?.signal === scope.signal ? cur : undefined;
   overrides.set(trackId, {
     liked,
-    pending: (cur?.pending ?? 0) + 1,
-    settledSeq: cur?.settledSeq ?? 0,
+    pending: (own?.pending ?? 0) + 1,
+    settledSeq: own?.settledSeq ?? 0,
+    signal: scope.signal,
   });
   notify();
 }
 
-export function applyOptimisticLike(trackId: string) {
-  apply(trackId, true);
+export function applyOptimisticLike(trackId: string, scope: AccountScope) {
+  apply(trackId, true, scope);
 }
 
-export function applyOptimisticUnlike(trackId: string) {
-  apply(trackId, false);
+export function applyOptimisticUnlike(trackId: string, scope: AccountScope) {
+  apply(trackId, false, scope);
 }
 
-export function settleOptimistic(trackId: string, ok: boolean) {
+export function settleOptimistic(
+  trackId: string,
+  ok: boolean,
+  scope: AccountScope,
+) {
   const o = overrides.get(trackId);
-  if (!o) return;
+  if (!o || o.signal !== scope.signal) return;
 
   o.pending--;
   o.settledSeq = ++settleSeq;
@@ -67,6 +77,7 @@ export function reconcileOverrides(fetchStartedSeq: number) {
   }
 }
 
-export function clearOverrides() {
+onAccountChange(() => {
   overrides.clear();
-}
+  notify();
+});

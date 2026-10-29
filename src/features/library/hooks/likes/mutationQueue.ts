@@ -1,4 +1,12 @@
+import { isScopeActive, type AccountScope } from "./accountScope.ts";
 import { notifyLibraryChanged } from "../usePlaylists.ts";
+
+export class StaleSessionError extends Error {
+  constructor() {
+    super("Session changed");
+    this.name = "StaleSessionError";
+  }
+}
 
 export type MutateOptions<R = unknown> = {
   onSuccess?: (value: R) => void;
@@ -33,14 +41,32 @@ export function endLibraryMutation() {
   }, NOTIFY_DEBOUNCE_MS);
 }
 
+function rejectOnAbort<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new StaleSessionError());
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    work
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 const queues = new Map<string, Promise<unknown>>();
 
 export function runSerial<T>(
   trackId: string,
-  task: () => Promise<T>,
+  scope: AccountScope,
+  task: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const prev = queues.get(trackId) ?? Promise.resolve();
-  const next = prev.catch(() => undefined).then(task);
+  const work = prev
+    .catch(() => undefined)
+    .then(() => {
+      if (!isScopeActive(scope)) throw new StaleSessionError();
+      return task(scope.signal);
+    });
+  const next = rejectOnAbort(scope.signal, work);
   queues.set(trackId, next);
 
   const cleanup = () => {
