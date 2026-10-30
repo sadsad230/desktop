@@ -163,6 +163,9 @@ function SongCardWithMenu({
     if (!isOpen) setMenuPosition(null);
   }, []);
 
+  const likeable =
+    (!searchType || searchType === "track") && !isLocalTrackId(id);
+
   return (
     <SongCard
       id={id}
@@ -181,6 +184,7 @@ function SongCardWithMenu({
       explicit={explicit}
       hideArtists={hideArtists}
       isArtist={isArtist}
+      isLikeable={likeable}
       imageShape={imageShape}
       trackNumber={trackNumber}
       repostedBy={repostedBy}

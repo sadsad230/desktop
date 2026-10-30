@@ -30,6 +30,7 @@ export interface SongCardProps {
   releaseDate?: string;
   explicit?: boolean;
   isArtist?: boolean;
+  isLikeable?: boolean;
   imageShape?: "square" | "circle";
   trackNumber?: number;
   repostedBy?: string;
@@ -64,6 +65,7 @@ function SongCard({
   releaseDate,
   explicit = false,
   isArtist = false,
+  isLikeable = true,
   imageShape = "square",
   trackNumber,
   repostedBy,
@@ -314,7 +316,7 @@ function SongCard({
           />
         )}
         {trailingAction}
-        {!isArtist && (
+        {!isArtist && isLikeable && id && (
           <Button
             type="button"
             aria-label={liked ? t("common.unlike") : t("common.like")}
